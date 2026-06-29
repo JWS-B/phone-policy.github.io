@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>School phone policy directory</title>
+
+  <!--
+  ═══════════════════════════════════════════════════════════════════════
+  SCHOOL PHONE POLICY DIRECTORY
+  ─────────────────────────────────────────────────────────────────────
+  Data source: Google Sheet (CSV export URL defined in DATA_URL below).
+  The sheet is expected to have headers on ROW 11 (index 10) with data
+  beginning at ROW 12 (index 11). Adjust HEADER_ROW_INDEX if this changes.
+
+  Key column names used (case-sensitive, must match sheet headers):
+    • "School"
+    • "Policy: Brick Only or No Phones"
+    • "Link to policy/letter"
+    • "Location"
+    • "In effect from"
+    • "MAT"
+    • "Notes"
+
+  Chart colours:
+    • Teal  (#1D9E75) = "No phones"  — positive, calm
+    • Mauve (#7F77DD) = "Brick only" — distinct, non-alarming
+    • Neutral grey    = "Unclear"    — de-emphasised
+  ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <style>
+    /* ─── Reset ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ─── Design tokens ────────────────────────────────────────────── */
+    :root {
+      --teal:        #1D9E75;   /* "No phones" colour */
+      --teal-light:  #E1F5EE;   /* "No phones" badge background */
+      --teal-dark:   #085041;   /* "No phones" badge text */
+
+      --mauve:       #7F77DD;   /* "Brick only" colour */
+      --mauve-light: #EEEDFE;   /* "Brick only" badge background */
+      --mauve-dark:  #3C3489;   /* "Brick only" badge text */
+
+      --amber-light: #FAEEDA;   /* MAT badge background */
+      --amber-dark:  #633806;   /* MAT badge text */
+      --amber-mid:   #EF9F27;   /* MAT border */
+
+      --grey-light:  #F1EFE8;   /* "Unclear" badge background */
+      --grey-mid:    #B4B2A9;   /* "Unclear" badge text + donut track */
+      --grey-dark:   #5F5E5A;   /* "Unclear" badge text */
+
+      --page-bg:     #F5F4F0;   /* Very light warm grey page background */
+      --surface:     #FFFFFF;   /* Card and panel background */
+      --border:      rgba(0,0,0,0.09);
+      --border-hover:rgba(0,0,0,0.18);
+
+      --text-primary:   #1A1A1A;
+      --text-secondary: #5A5A5A;
+      --text-tertiary:  #909090;
+
+      --font: system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+
+      --radius-sm:  6px;
+      --radius-md:  10px;
+      --radius-lg:  14px;
+      --radius-pill:999px;
+    }
+
+    /* ─── Base ─────────────────────────────────────────────────────── */
+    html { font-size: 16px; }
+
+    body {
+      font-family: var(--font);
+      background: var(--page-bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    a:focus-visible {
+      outline: 2px solid var(--teal);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ─── Page wrapper ─────────────────────────────────────────────── */
+    .page {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+    }
+
+    /* ─── Header / hero ────────────────────────────────────────────── */
+    .hero { margin-bottom: 2rem; }
+
+    .hero__eyebrow {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: .5rem;
+    }
+
+    .hero__title {
+      font-size: clamp(20px, 3vw, 28px);
+      font-weight: 600;
+      letter-spacing: -.02em;
+      margin-bottom: .5rem;
+    }
+
+    .hero__sub {
+      font-size: 15px;
+      color: var(--text-secondary);
+      max-width: 600px;
+      line-height: 1.6;
+    }
+
+    /* ─── Summary strip ─────────────────────────────────────────────
+       Four metric cards across the top. At narrow widths they
+       collapse to a 2×2 grid, then stack fully on very small screens. */
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 720px) {
+      .summary { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 400px) {
+      .summary { grid-template-columns: 1fr; }
+    }
+
+    .metric {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.25rem;
+    }
+
+    .metric__label {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: .4rem;
+    }
+
+    .metric__value {
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -.03em;
+      line-height: 1;
+    }
+
+    /* Per-metric accent colours */
+    .metric--no    .metric__value { color: var(--teal); }
+    .metric--brick .metric__value { color: var(--mauve); }
+
+    /* ─── Chart panel ───────────────────────────────────────────────
+       Donut chart + legend side-by-side; wraps to stacked on mobile. */
+    .chart-panel {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 2.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 2rem;
+    }
+
+    /* SVG donut wrapper + centred label overlay */
+    .donut-wrap {
+      position: relative;
+      width: 130px;
+      height: 130px;
+      flex-shrink: 0;
+    }
+
+    .donut-wrap svg { display: block; width: 130px; height: 130px; }
+
+    .donut-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .donut-label__pct {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -.03em;
+      line-height: 1;
+    }
+
+    .donut-label__desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 3px;
+    }
+
+    /* Legend items */
+    .legend { display: flex; flex-direction: column; gap: .875rem; }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .legend-item__label {
+      font-size: 14px;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+
+    .legend-item__count {
+      font-size: 14px;
+      font-weight: 600;
+      min-width: 2.5rem;
+      text-align: right;
+    }
+
+    /* ─── Controls bar ──────────────────────────────────────────────
+       Search input + policy select + MAT toggle. Wrap on mobile. */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: .75rem;
+    }
+
+    /* Search box with leading icon */
+    .search-wrap {
+      position: relative;
+      flex: 1 1 220px;
+      max-width: 360px;
+    }
+
+    .search-wrap__icon {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      opacity: .45;
+      pointer-events: none;
+    }
+
+    .search-wrap input {
+      width: 100%;
+      padding: 9px 12px 9px 34px;
+      border: 0.5px solid var(--border-hover);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      color: var(--text-primary);
+      font-family: var(--font);
+      font-size: 14px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+
+    .search-wrap input:focus {
+      outline: none;
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(29,158,117,.12);
+    }
+
+    .search-wrap input::placeholder { color: var(--text-tertiary); }
+
+    /* Policy dropdown */
+    select#policyFilter {
+      padding: 9px 32px 9px 12px;
+      border: 0.5px solid var(--border-hover);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      color: var(--text-primary);
+      font-family: var(--font);
+      font-size: 14px;
+      cursor: pointer;
+      appearance: none;
+      /* Inline chevron via background SVG */
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23909090' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      transition: border-color .15s;
+    }
+
+    select#policyFilter:focus {
+      outline: none;
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(29,158,117,.12);
+    }
+
+    /* MAT toggle button — changes appearance when active */
+    .mat-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 14px;
+      border: 0.5px solid var(--border-hover);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-family: var(--font);
+      font-size: 14px;
+      cursor: pointer;
+      transition: background .15s, border-color .15s, color .15s;
+      user-select: none;
+    }
+
+    .mat-toggle__icon { width: 16px; height: 16px; opacity: .5; }
+
+    .mat-toggle.is-active {
+      background: var(--amber-light);   /* was: var(--mauve-light) */
+      border-color: var(--amber-mid);   /* was: var(--mauve)  — mid-amber for the border */
+      color: var(--amber-dark);         /* was: var(--mauve-dark) */
+    }
+
+    .mat-toggle.is-active .mat-toggle__icon { opacity: 1; }
+
+    /* Result count */
+    .result-count {
+      font-size: 13px;
+      color: var(--text-tertiary);
+      margin-bottom: 1.25rem;
+    }
+
+    /* ─── Card grid ─────────────────────────────────────────────────
+       Responsive from 1 → 2 → 3 → 4 columns.
+       max-width breakpoints chosen to align with common viewport sizes. */
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 1fr;          /* mobile: 1 column */
+    }
+
+    @media (min-width: 580px) {
+      .grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @media (min-width: 1220px) {
+      .grid { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    /* Individual school card */
+    .card {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.1rem 1.1rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+
+    .card:hover {
+      border-color: var(--border-hover);
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    }
+
+    /* School name */
+    .card__name {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.35;
+      color: var(--text-primary);
+    }
+
+    /* Location line with pin icon */
+    .card__location {
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .card__location svg { flex-shrink: 0; opacity: .5; }
+
+    /* Badge row */
+    .card__badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    /* Badges ─ all pill-shaped */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: var(--radius-pill);
+      font-size: 11.5px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    .badge--no      { background: var(--teal-light);  color: var(--teal-dark); }
+    .badge--brick   { background: var(--mauve-light); color: var(--mauve-dark); }
+    .badge--unclear { background: var(--grey-light);  color: var(--grey-dark); }
+    .badge--mat     { background: var(--amber-light); color: var(--amber-dark); }
+    .badge--date    {
+      background: var(--page-bg);
+      color: var(--text-secondary);
+      font-weight: 400;
+      border: 0.5px solid var(--border);
+    }
+
+    /* Notes text */
+    .card__notes {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      flex: 1;
+      margin-top: 2px;
+    }
+
+    /* Policy link at card foot */
+    .card__link {
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 4px;
+      color: var(--teal);
+    }
+
+    .card__link--muted { color: var(--text-tertiary); }
+    .card__link svg { flex-shrink: 0; }
+
+    /* ─── Loading spinner ───────────────────────────────────────────
+       Shown while the CSV fetch is in flight. */
+    .loader {
+      text-align: center;
+      padding: 4rem 0;
+    }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      margin: 0 auto 1rem;
+      border: 3px solid var(--border);
+      border-top-color: var(--teal);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loader__text {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* ─── Empty state ───────────────────────────────────────────────
+       Shown when filters return no results. */
+    .empty-state {
+      text-align: center;
+      padding: 3.5rem 0;
+    }
+
+    .empty-state__icon {
+      margin: 0 auto .75rem;
+      opacity: .3;
+      width: 32px;
+      height: 32px;
+    }
+
+    .empty-state__text {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* ─── Reduced-motion: disable spinner for users who prefer it ── */
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation: none; border-top-color: var(--teal); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="hero">
+    <p class="hero__eyebrow">UK state secondary schools</p>
+    <h1 class="hero__title">Phone policy directory</h1>
+    <p class="hero__sub">
+      A growing directory of state secondary schools championing no-phone
+      or brick-only policies — protecting children, promoting play, and
+      driving cultural change.
+    </p>
+  </header>
+
+  <!-- ── Summary metrics ─────────────────────────────────────────── -->
+  <!--
+    These four cards are populated by JS once the CSV loads.
+    IDs: #statTotal, #statNo, #statBrick, #statMat
+  -->
+  <div class="summary" role="region" aria-label="Summary statistics">
+    <div class="metric">
+      <div class="metric__label">Schools listed</div>
+      <div class="metric__value" id="statTotal">—</div>
+    </div>
+    <div class="metric metric--no">
+      <div class="metric__label">No phones</div>
+      <div class="metric__value" id="statNo">—</div>
+    </div>
+    <div class="metric metric--brick">
+      <div class="metric__label">Brick only</div>
+      <div class="metric__value" id="statBrick">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric__label">Part of a MAT</div>
+      <div class="metric__value" id="statMat">—</div>
+    </div>
+  </div>
+
+  <!-- ── Donut chart + legend ─────────────────────────────────────
+       The SVG arcs are drawn programmatically in JS (drawDonut()).
+       Two concentric stroke-dasharray arcs sit on a grey track. -->
+  <div class="chart-panel" id="chartPanel" style="display:none;" role="img" aria-label="Policy breakdown chart">
+    <div class="donut-wrap">
+      <svg viewBox="0 0 130 130" aria-hidden="true" id="donutSvg"></svg>
+      <div class="donut-label">
+        <span class="donut-label__pct" id="donutPct">—</span>
+        <span class="donut-label__desc">no phones</span>
+      </div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <!-- ── Controls ─────────────────────────────────────────────────
+       Three controls: search input, policy dropdown, MAT toggle. -->
+  <div class="controls" role="search" aria-label="Filter schools">
+
+    <!-- Free-text search (school name or location) -->
+    <div class="search-wrap">
+      <svg class="search-wrap__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <circle cx="6.5" cy="6.5" r="4.5"/><path d="M10.5 10.5l3 3" stroke-linecap="round"/>
+      </svg>
+      <input
+        type="search"
+        id="search"
+        placeholder="Search by school or location…"
+        aria-label="Search schools"
+        autocomplete="off"
+      />
+    </div>
+
+    <!-- Policy type dropdown -->
+    <select id="policyFilter" aria-label="Filter by policy type">
+      <option value="all">All policies</option>
+      <option value="no">No phones</option>
+      <option value="brick">Brick only</option>
+      <option value="other">Unclear</option>
+    </select>
+
+    <!-- MAT-only toggle -->
+    <button
+      class="mat-toggle"
+      id="matBtn"
+      type="button"
+      aria-pressed="false"
+      onclick="toggleMat()"
+    >
+      <svg class="mat-toggle__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+        <path d="M5 3V2m6 1V2M2 7h12" stroke-linecap="round"/>
+      </svg>
+      MAT schools only
+    </button>
+
+  </div>
+
+  <!-- Result count -->
+  <p class="result-count" id="count" aria-live="polite"></p>
+
+  <!-- ── Loading state ────────────────────────────────────────────── -->
+  <div class="loader" id="loader" aria-live="polite">
+    <div class="spinner" role="status" aria-label="Loading data"></div>
+    <p class="loader__text">Loading school data…</p>
+  </div>
+
+  <!-- ── School cards ─────────────────────────────────────────────── -->
+  <div class="grid" id="list" role="list"></div>
+
+</div><!-- /.page -->
+
+
+<script>
+  /*
+  ═══════════════════════════════════════════════════════════════════
+  CONFIGURATION
+  ─────────────────────────────────────────────────────────────────
+  Change DATA_URL if the Google Sheet is ever republished at a
+  new URL. Change HEADER_ROW_INDEX if the header row moves.
+  ═══════════════════════════════════════════════════════════════════
+  */
+  const DATA_URL =
+    'https://docs.google.com/spreadsheets/d/e/' +
+    '2PACX-1vQytt09KLIpQjt5NYF48WJXqAferZW1kF5XNcD5V2u2H8lFzMNFURPfJsRlvTFMt4hgu1TrTG7IBzYa' +
+    '/pub?output=csv';
+
+  const HEADER_ROW_INDEX = 10;   // 0-based: row 11 in the spreadsheet
+
+  /*
+  ── Column name constants ─────────────────────────────────────────
+  These must exactly match the header row in the Google Sheet.
+  Update here if column names change rather than hunting through code.
+  */
+  const COL_SCHOOL   = 'School';
+  const COL_POLICY   = 'Policy: Brick Only or No Phones';
+  const COL_LINK     = 'Link to policy/letter';
+  const COL_LOCATION = 'Location';
+  const COL_FROM     = 'In effect from';
+  const COL_MAT      = 'MAT';
+  const COL_NOTES    = 'Notes';
+
+  /* Sheet fallback link when a per-school URL is absent */
+  const SHEET_URL =
+    'https://docs.google.com/spreadsheets/d/e/' +
+    '2PACX-1vQytt09KLIpQjt5NYF48WJXqAferZW1kF5XNcD5V2u2H8lFzMNFURPfJsRlvTFMt4hgu1TrTG7IBzYa' +
+    '/pubhtml';
+
+
+  /* ── State ──────────────────────────────────────────────────────── */
+  let allData  = [];
+  let matActive = false;
+
+
+  /* ── CSV parser ─────────────────────────────────────────────────
+     A lightweight, RFC-compliant CSV parser that handles:
+       • Quoted fields (including embedded commas and newlines)
+       • Doubled quotes as escape sequences ("")
+       • Both \n and \r\n line endings
+     Returns an array of rows, each an array of field strings. */
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i], next = text[i + 1];
+
+      if (ch === '"') {
+        if (inQuotes && next === '"') { field += '"'; i++; }  // escaped quote
+        else { inQuotes = !inQuotes; }
+      } else if (ch === ',' && !inQuotes) {
+        row.push(field); field = '';
+      } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+        if (ch === '\r' && next === '\n') i++;                 // skip \r of \r\n
+        row.push(field);
+        rows.push(row);
+        row = []; field = '';
+      } else {
+        field += ch;
+      }
+    }
+    /* Push final row if file doesn't end with a newline */
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+
+  /* ── Policy classifier ──────────────────────────────────────────
+     Reads the free-text "Notes" field and returns one of three
+     categories: 'no' | 'brick' | 'other'.
+     Update the keyword lists here if categorisation drifts. */
+  function classify(notes) {
+    const t = (notes || '').toLowerCase().trim();
+
+    if (t.includes('no phone') || t.includes('no phones') ||
+        t.includes('not even bricks')) {
+      return 'no';
+    }
+    if (t.includes('brick')) { return 'brick'; }
+    return 'other';
+  }
+
+
+  /* ── Link validator ─────────────────────────────────────────────
+     Only treats cell values that start with 'http' as real URLs.
+     Vanity text or placeholder values are discarded (return null). */
+  function validLink(value) {
+    const t = (value || '').trim();
+    return t.startsWith('http') ? t : null;
+  }
+
+
+  /* ── MAT toggle ─────────────────────────────────────────────────
+     Called by the MAT button's onclick. Updates aria-pressed for
+     accessibility and re-renders the filtered list. */
+  function toggleMat() {
+    matActive = !matActive;
+    const btn = document.getElementById('matBtn');
+    btn.classList.toggle('is-active', matActive);
+    btn.setAttribute('aria-pressed', matActive ? 'true' : 'false');
+    updateView();
+  }
+
+
+  /* ── Filter engine ──────────────────────────────────────────────
+     Combines the three active filters (search text, policy type,
+     MAT toggle) and returns the matching subset of allData. */
+  function applyFilters() {
+    const q   = document.getElementById('search').value.toLowerCase().trim();
+    const pol = document.getElementById('policyFilter').value;
+
+    return allData.filter(d => {
+      const school = (d[COL_SCHOOL]   || '').toLowerCase();
+      const loc    = (d[COL_LOCATION] || '').toLowerCase();
+      const type   = classify(d[COL_NOTES]);
+      const hasMAT = (d[COL_MAT]      || '').trim() !== '';
+
+      if (q && !school.includes(q) && !loc.includes(q)) return false;
+      if (pol !== 'all' && type !== pol)                 return false;
+      if (matActive && !hasMAT)                          return false;
+
+      return true;
+    });
+  }
+
+
+  /* ── Render cards ───────────────────────────────────────────────
+     Builds and injects HTML for each school in the supplied list.
+     Completely replaces the grid contents on each call. */
+  function render(list) {
+    const container = document.getElementById('list');
+    const count     = document.getElementById('count');
+
+    count.textContent =
+      list.length === 0
+        ? 'No schools match your filters.'
+        : `Showing ${list.length} school${list.length === 1 ? '' : 's'}`;
+
+    if (!list.length) {
+      container.innerHTML = `
+        <div class="empty-state" style="grid-column:1/-1">
+          <svg class="empty-state__icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <circle cx="14" cy="14" r="10"/><path d="M22 22l6 6" stroke-linecap="round"/>
+          </svg>
+          <p class="empty-state__text">No schools match your filters — try broadening your search.</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = list.map(d => {
+      const type = classify(d[COL_NOTES]);
+      const link = validLink(d[COL_LINK]);
+
+      /* Policy badge */
+      const badgeClass  = type === 'no' ? 'badge--no' : type === 'brick' ? 'badge--brick' : 'badge--unclear';
+      const badgeLabel  = type === 'no' ? 'No phones' : type === 'brick' ? 'Brick only'   : 'Unclear';
+
+      /* Optional date badge */
+      const dateBadge = d[COL_FROM]
+        ? `<span class="badge badge--date">${d[COL_FROM]}</span>` : '';
+
+      /* Optional MAT badge */
+      const matBadge = d[COL_MAT]
+        ? `<span class="badge badge--mat">${d[COL_MAT]}</span>` : '';
+
+      /* Notes (trimmed to avoid empty paragraphs) */
+      const notes = (d[COL_NOTES] || '').trim();
+
+      /* Policy link or fallback to Google Sheet */
+      const linkEl = link
+        ? `<a class="card__link" href="${link}" target="_blank" rel="noopener">
+             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+               <path d="M5 2H2a1 1 0 00-1 1v7a1 1 0 001 1h7a1 1 0 001-1V8M8 1h3m0 0v3m0-3L5 7" stroke-linecap="round" stroke-linejoin="round"/>
+             </svg>
+             View policy
+           </a>`
+        : `<a class="card__link card__link--muted" href="${SHEET_URL}" target="_blank" rel="noopener">
+             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+               <rect x="1" y="1" width="10" height="10" rx="1.5"/>
+               <path d="M1 4h10M4 4v7" stroke-linecap="round"/>
+             </svg>
+             Find in spreadsheet
+           </a>`;
+
+      return `
+        <article class="card" role="listitem">
+          <h2 class="card__name">${escapeHtml(d[COL_SCHOOL] || '')}</h2>
+          ${d[COL_LOCATION]
+            ? `<p class="card__location">
+                 <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                   <path d="M6.5 1A3.5 3.5 0 003 4.5C3 7.5 6.5 12 6.5 12S10 7.5 10 4.5A3.5 3.5 0 006.5 1z" stroke-linecap="round" stroke-linejoin="round"/>
+                   <circle cx="6.5" cy="4.5" r="1" fill="currentColor" stroke="none"/>
+                 </svg>
+                 ${escapeHtml(d[COL_LOCATION])}
+               </p>` : ''}
+          <div class="card__badges">
+            <span class="badge ${badgeClass}">${badgeLabel}</span>
+            ${dateBadge}
+            ${matBadge}
+          </div>
+          ${notes ? `<p class="card__notes">${escapeHtml(notes)}</p>` : ''}
+          ${linkEl}
+        </article>`;
+    }).join('');
+  }
+
+
+  /* ── Convenience: re-filter then re-render ──────────────────────── */
+  function updateView() { render(applyFilters()); }
+
+
+  /* ── HTML escaper ───────────────────────────────────────────────
+     Prevents XSS from malicious content in the Google Sheet. */
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+
+  /* ── Donut chart renderer ───────────────────────────────────────
+     Draws two SVG circle strokes (stroke-dasharray technique) on
+     top of a grey track ring. No external library needed.
+
+     Parameters:
+       noPct    – percentage (0-100) for the "No phones" arc
+       brickPct – percentage (0-100) for the "Brick only" arc
+
+     The arcs start at the top (−25% offset = 12 o'clock position).
+  */
+  function drawDonut(noPct, brickPct) {
+    const r     = 50;           // radius
+    const cx    = 65;           // centre x (viewBox is 130×130)
+    const cy    = 65;           // centre y
+    const circ  = 2 * Math.PI * r;
+    const offset = circ * 0.25; // rotate start to 12 o'clock
+
+    const noLen    = circ * (noPct    / 100);
+    const brickLen = circ * (brickPct / 100);
+
+    document.getElementById('donutSvg').innerHTML = `
+      <!-- Grey track (full circle) -->
+      <circle cx="${cx}" cy="${cy}" r="${r}"
+        fill="none" stroke="#D3D1C7" stroke-width="15"/>
+
+      <!-- "No phones" arc (teal) -->
+      <circle cx="${cx}" cy="${cy}" r="${r}"
+        fill="none" stroke="#1D9E75" stroke-width="15"
+        stroke-dasharray="${noLen} ${circ - noLen}"
+        stroke-dashoffset="${offset}"
+        stroke-linecap="butt"/>
+
+      <!-- "Brick only" arc (mauve), starting after the teal arc -->
+      <circle cx="${cx}" cy="${cy}" r="${r}"
+        fill="none" stroke="#7F77DD" stroke-width="15"
+        stroke-dasharray="${brickLen} ${circ - brickLen}"
+        stroke-dashoffset="${offset - noLen}"
+        stroke-linecap="butt"/>
+    `;
+
+    /* Update the centred percentage label */
+    document.getElementById('donutPct').textContent = Math.round(noPct) + '%';
+  }
+
+
+  /* ── Fetch and bootstrap ────────────────────────────────────────
+     1. Fetch CSV from Google Sheets.
+     2. Parse into row objects.
+     3. Compute counts and draw chart.
+     4. Show initial full card list.
+     5. Wire up event listeners.
+  */
+  fetch(DATA_URL)
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    })
+    .then(text => {
+      const rows = parseCSV(text);
+
+      /* Extract headers from the configured row, data from rows below it */
+      const headers = rows[HEADER_ROW_INDEX];
+      allData = rows.slice(HEADER_ROW_INDEX + 1).map(r => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = r[i] || ''; });
+        return obj;
+      }).filter(d => d[COL_SCHOOL]);  // discard any blank trailing rows
+
+      /* ── Compute category counts ────────────────────────────── */
+      let noCount = 0, brickCount = 0, otherCount = 0, matCount = 0;
+
+      allData.forEach(d => {
+        const t = classify(d[COL_NOTES]);
+        if (t === 'no')    noCount++;
+        else if (t === 'brick') brickCount++;
+        else               otherCount++;
+
+        if ((d[COL_MAT] || '').trim()) matCount++;
+      });
+
+      const total  = allData.length;
+      const noPct  = total ? (noCount    / total) * 100 : 0;
+      const brkPct = total ? (brickCount / total) * 100 : 0;
+
+      /* ── Populate metric cards ──────────────────────────────── */
+      document.getElementById('statTotal').textContent = total;
+      document.getElementById('statNo').textContent    = noCount;
+      document.getElementById('statBrick').textContent = brickCount;
+      document.getElementById('statMat').textContent   = matCount;
+
+      /* ── Draw donut and reveal chart panel ─────────────────── */
+      drawDonut(noPct, brkPct);
+      document.getElementById('chartPanel').style.display = 'flex';
+
+      /* ── Populate legend ────────────────────────────────────── */
+      document.getElementById('legend').innerHTML = [
+        { colour: '#1D9E75', label: 'No phones',  count: noCount    },
+        { colour: '#7F77DD', label: 'Brick only', count: brickCount },
+        { colour: '#D3D1C7', label: 'Unclear',    count: otherCount },
+      ].map(({ colour, label, count }) => `
+        <div class="legend-item">
+          <span class="legend-dot" style="background:${colour}"></span>
+          <span class="legend-item__label">${label}</span>
+          <span class="legend-item__count">${count}</span>
+        </div>
+      `).join('');
+
+      /* ── Hide loader and render cards ───────────────────────── */
+      document.getElementById('loader').style.display = 'none';
+      render(allData);
+
+      /* ── Wire up filter controls ────────────────────────────── */
+      document.getElementById('search')
+        .addEventListener('input', updateView);
+      document.getElementById('policyFilter')
+        .addEventListener('change', updateView);
+    })
+    .catch(err => {
+      /* Graceful error state — shown if the fetch or parse fails */
+      document.getElementById('loader').innerHTML = `
+        <p style="color:#A32D2D;font-size:14px;">
+          Could not load school data. Please check your internet connection and try reloading.
+          <br><small style="color:#909090">(${err.message})</small>
+        </p>`;
+    });
+</script>
+
+</body>
+</html>
